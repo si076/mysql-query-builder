@@ -1,0 +1,27 @@
+{
+  "extends": "@tsconfig/node20/tsconfig.json",
+  "compileOnSave": true,
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "outDir": "./dist",
+    "experimentalDecorators": true,
+    "types": [
+      "node"
+    ],
+    "emitDecoratorMetadata": true,
+    "allowJs": true,
+    // "declaration": true,
+    // "declarationMap": true
+  },
+  "include": [
+    "./src/*.ts",
+    "./src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+
+}
