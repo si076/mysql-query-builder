@@ -2,11 +2,12 @@
   "extends": "@tsconfig/node20/tsconfig.json",
   "compileOnSave": true,
   "compilerOptions": {
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    // "module": "nodenext",
+    // "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "outDir": "./dist",
+    "rootDir": "./src",
     "experimentalDecorators": true,
     "types": [
       "node"
@@ -19,7 +20,7 @@
   "include": [
     "./src/*.ts",
     "./src/**/*.ts"
-  ],
+, "src/test/select.test.ts"  ],
   "exclude": [
     "node_modules"
   ]

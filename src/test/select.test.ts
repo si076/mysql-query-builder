@@ -1,7 +1,12 @@
-const { select } = require('../index.js');
-const parser = require('js-sql-parser');
+import { select }  from '../index.js';
 
-function parseSql(query) {
+import {expect, test} from '@jest/globals';
+
+import { createRequire } from "module";
+const req = createRequire('/run/media/ahmedci/FCFCBBF8FCBBAAF2/Ahmet/Projects/GitCloneRepo/mysql-query-builder/src');
+const parser = req('js-sql-parser');
+
+function parseSql(query: string) {
     if (!query || typeof query !== "string")
         return false;
     let tokens = query.split(" ").map((e) => {
@@ -28,7 +33,8 @@ function parseSql(query) {
 
 //parser.astify('SELECT * FROM `product` WHERE (name LIKE "dummy" AND sku = "dummy") LIMIT 0, 1000000000');
 test('Simple select', () => {
-    expect(parseSql(select().from("product").sql())).toBe(true);
+    let query = select().from("product");
+    expect(parseSql(query.sql())).toBe(true);
 });
 
 test('Select with function', () => {
@@ -37,7 +43,7 @@ test('Select with function', () => {
     query.select("SUM (product.id)");
     query.select("SUM ( product.id )", "sum");
     query.where("name", "LIKE", "abc");
-    query.limit(2, '5');
+    query.limit(2, 5);
     expect(parseSql(query.sql())).toBe(true);
 });
 
@@ -45,7 +51,7 @@ test('Select with function', () => {
 test('Simple select with where', () => {
     let query = select().from("product");
     query.where("name", "LIKE", "abc");
-    query.limit(2, '5');
+    query.limit(2, 5);
     expect(parseSql(query.sql())).toBe(true);
 });
 
@@ -182,7 +188,7 @@ test('Limit', () => {
     query.leftJoin("price").on("product.id", "=", "price.`id`");
     query.groupBy("product.id");
     query.having("SUM(product.id)", "=", 1);
-    query.limit(10);
+    query.limit(0, 10);
     expect(parseSql(query.sql())).toBe(true);
 });
 
@@ -193,7 +199,7 @@ test('Limit', () => {
     query.leftJoin("price").on("product.id", "=", "price.`id`");
     query.groupBy("product.id");
     query.having("SUM(product.id)", "=", 1);
-    query.limit(1, "10");
+    query.limit(1, 10);
     expect(parseSql(query.sql())).toBe(true);
 });
 
@@ -205,7 +211,7 @@ test('Limit', () => {
     query.leftJoin("price").on("product.id", "=", "price.`id`");
     query.groupBy("product.id");
     query.having("SUM(product.id)", "=", 1);
-    query.limit(10);
+    query.limit(0, 10);
     query.orderBy("product.id");
     expect(parseSql(query.sql())).toBe(true);
 });
@@ -216,7 +222,7 @@ test('Limit', () => {
     query.leftJoin("price").on("product.id", "=", "price.`id`");
     query.groupBy("product.id");
     query.having("SUM(product.id)", "=", 1);
-    query.limit(10);
+    query.limit(0, 10);
     query.orderBy("product.id", "ASC");
     expect(parseSql(query.sql())).toBe(true);
 });

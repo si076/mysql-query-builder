@@ -1,15 +1,11 @@
 {
-  "name": "@evershop/mysql-query-builder",
-  "version": "1.3.9",
+  "name": "mysql-query-builder-ts",
+  "version": "0.1.0",
   "description": "A MySQL query builder for NodeJS",
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "jest --coverage"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/evershopcommerce/mysql-query-builder.git"
+    "test": "jest"
   },
   "keywords": [
     "mysql",
@@ -24,12 +20,7 @@
     "toString.js",
     "test"
   ],
-  "author": "The Nguyen (https://evershop.io/)",
   "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/evershopcommerce/mysql-query-builder/issues"
-  },
-  "homepage": "https://github.com/evershopcommerce/mysql-query-builder#readme",
   "dependencies": {
     "mysql2": "^3.1.2",
     "uniqid": "^5.3.0"
@@ -38,9 +29,15 @@
     "node": ">= 12.0.0"
   },
   "devDependencies": {
+    "@babel/preset-env": "^7.29.5",
+    "@types/node": "^25.9.1",
     "@tsconfig/node20": "^20.1.9",
+    "@types/jest": "^30.0.0",
     "@types/uniqid": "^5.3.4",
-    "jest": "^26.6.3",
-    "js-sql-parser": "^1.4.1"
+    "babel-jest": "^30.4.1",
+    "js-sql-parser": "^1.4.1",
+    "ts-jest": "^29.4.9",
+    "tsc": "^2.0.4",
+    "typescript": "^6.0.3"
   }
 }

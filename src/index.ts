@@ -1,8 +1,13 @@
-import { x as uniqid } from "uniqid";
-// import { util } from "util";
-import { toString } from "./toString.js";
-import { fieldResolve }  from "./fieldResolve.js";
-import mySQL from "mysql2";
+/* This is a fork of https://github.com/evershopcommerce/mysql-query-builder , 
+ * node module @evershop/mysql-query-builder.
+ * The purpose of this fork is to: 
+ * - typescript the code
+ * - make to string of values optional, by default values are converted to string (Buffer should not be converted)
+ * - table fields are no more determined with describe query but determined from the data object's keys  
+ */
+
+import uniqid from "uniqid";
+import mySQL, { QueryOptions, QueryResult, QueryValues, RowDataPacket } from "mysql2";
 
 class Select {
   _fields: string[] = [];
@@ -43,7 +48,7 @@ class Select {
   }
 
   clone() {
-    let cp = new select();
+    let cp = new Select();
     cp._fields = this._fields;
 
     return cp;
@@ -60,6 +65,7 @@ class Leaf {
 
   constructor(link: string, field: string, 
               operator: string, value: any, 
+              valueToString: boolean = true,
               node?: Node) {
     
     // Check if the value is a column or not
@@ -85,7 +91,11 @@ class Leaf {
         }
       } else {
         const key = uniqid();
-        this._binding[key] = toString(value);
+        if (valueToString) {
+          this._binding[key] = toString(value);
+        } else {
+          this._binding[key] = value;
+        }
         this._value = `:${key}`;
       }
     }
@@ -130,8 +140,9 @@ class Node {
     this._query = query;
   }
 
-  addLeaf(link: string, field: string, operator: string, value: any, node: Node = this) {
-    this._tree.push(new Leaf(link, field, operator, value, node));
+  addLeaf(link: string, field: string, operator: string, value: any, 
+          valueToString: boolean = true, node: Node = this) {
+    this._tree.push(new Leaf(link, field, operator, value, valueToString, node));
 
     // Return this for chaining
     return this;
@@ -252,7 +263,7 @@ class Join {
     this._query = query;
   }
 
-  add(type: string, table: string, alias: string) {
+  add(type: string, table: string, alias?: string) {
     this._joins.push({
       type,
       table,
@@ -268,7 +279,7 @@ class Join {
 
     let node = this._joins[this._joins.length - 1]["on"];
     node._link = "ON";
-    node.addLeaf("AND", column, operator, referencedColumn, node);
+    node.addLeaf("AND", column, operator, referencedColumn, true, node);
 
     return node;
   }
@@ -306,21 +317,21 @@ class Where extends Node {
     else return "WHERE " + render.slice(4);
   }
 
-  andWhere(field: string, operator: string, value: any) {
+  andWhere(field: string, operator: string, value: any, valueToString: boolean = true) {
     let node = new Node(this._query);
     node._link = "AND";
     node._parent = this;
-    node.addLeaf("AND", field, operator, value, this);
+    node.addLeaf("AND", field, operator, value, valueToString, this);
     this.addNode(node);
 
     return node;
   }
 
-  orWhere(field: string, operator: string, value: any) {
+  orWhere(field: string, operator: string, value: any, valueToString: boolean = true) {
     let node = new Node(this._query);
     node._link = "OR";
     node._parent = this;
-    node.addLeaf("OR", field, operator, value, this);
+    node.addLeaf("OR", field, operator, value, valueToString, this);
     this.addNode(node);
 
     return node;
@@ -439,19 +450,50 @@ class OrderBy {
 class Query {
   _where: Where;
   _binding: {[key: string]: any} = [];
+  _data: {[key: string]: any} = {};
+  _fields: string[] = [];
 
   constructor() {
     this._where = new Where(this);
   }
 
+  given(data: {[key: string]: any}, valueToString: boolean = true) {
+    if (typeof data !== "object" || data === null) {
+      throw new Error("Data must be an object and not null");
+    }
+    let copy: {[key: string]: any} = {};
+    Object.keys(data).forEach((key) => {
+      if (valueToString) {
+        copy[key] = toString(data[key]);
+      } else {
+        copy[key] = data[key];
+      }
+      this._fields.push(key);
+    });
+    this._data = copy;
+
+    return this;
+  }
+
+  prime(field: string, value: any, valueToString: boolean = true) {
+    if (valueToString) {
+      this._data[field] = toString(value);
+    } else {
+      this._data[field] = value;
+    }
+    this._fields.push(field);
+
+    return this;
+  }
+
   /**
    * @returns {Where|Node}
    */
-  where(field: string, operator: string, value: any) {
+  where(field: string, operator: string, value: any, valueToString: boolean = true) {
     // This method will reset the `_where` object. Call `andWhere` or `orWhere` if you want to add more condition
     this._where = new Where(this);
     this._where._link = "AND";
-    this._where.addLeaf("AND", field, operator, value, this._where);
+    this._where.addLeaf("AND", field, operator, value, valueToString, this._where);
 
     return this._where;
   }
@@ -496,7 +538,7 @@ class Query {
   }
 
   async execute(connection: mySQL.PoolConnection, releaseConnection = true) {
-    let sql = await this.sql(connection);
+    let sql = this.sql();
     let binding = [];
     for (let key in this._binding) {
       if (this._binding.hasOwnProperty(key)) {
@@ -510,11 +552,12 @@ class Query {
     return result;
   }
 
-  async describeFields(connection: mySQL.PoolConnection, table: string): Promise<{[key: string]: string}[]> {
+  async describeFields(connection: mySQL.PoolConnection, table: string): Promise<RowDataPacket[]> {
     return new Promise((resolve, reject) => {
-                        connection.query(`DESCRIBE \`${table}\``,
+                        connection.query({ sql: `DESCRIBE \`${table}\``} as QueryOptions, 
+                          null as QueryValues,
                           (err: mySQL.QueryError | null, 
-                           result: {[key: string]: string}[], 
+                           result: RowDataPacket[], 
                            fields: mySQL.FieldPacket[]) => {
                              if (err) {
                                reject(err);
@@ -525,7 +568,7 @@ class Query {
                       });    
   }
 
-  async sql(connection: mySQL.PoolConnection): Promise<string> {
+  sql(): string {
     throw new Error('To be implemented by subclasses');
   }
 
@@ -554,7 +597,7 @@ class SelectQuery extends Query {
     return this;
   }
 
-  from(table: string, alias: string) {
+  from(table: string, alias?: string) {
     this._table = table;
     this._alias = alias;
     return this;
@@ -566,19 +609,19 @@ class SelectQuery extends Query {
     return this._having;
   }
 
-  leftJoin(table: string, alias: string) {
+  leftJoin(table: string, alias?: string) {
     this._join.add("LEFT JOIN", table, alias);
 
     return this._join;
   }
 
-  rightJoin(table: string, alias: string) {
+  rightJoin(table: string, alias?: string) {
     this._join.add("RIGHT JOIN", table, alias);
 
     return this._join;
   }
 
-  innerJoin(table: string, alias: string) {
+  innerJoin(table: string, alias?: string) {
     this._join.add("INNER JOIN", table, alias);
 
     return this._join;
@@ -590,10 +633,10 @@ class SelectQuery extends Query {
     return this;
   }
 
-  groupBy() {
-    let args = [].slice.call(arguments);
+  groupBy(...fields: string[]) {
+    // let args = [].slice.call(arguments);
 
-    args.forEach((element) => {
+    fields.forEach((element) => {
       this._groupBy.add(String(element));
     });
 
@@ -606,7 +649,7 @@ class SelectQuery extends Query {
     return this;
   }
 
-  async sql(connection: mySQL.PoolConnection): Promise<string> {
+  sql(): string {
     if (!this._table)
       throw Error("You must specific table by calling `from` method");
 
@@ -640,7 +683,7 @@ class SelectQuery extends Query {
     if (!(connection instanceof mySQL.PoolConnection)) {
       connection = await getConnection(connection);
     }
-    let sql = await this.sql(connection);
+    let sql = await this.sql();
     let binding = [];
     for (var key in this._binding) {
       if (this._binding.hasOwnProperty(key)) {
@@ -681,7 +724,6 @@ class SelectQuery extends Query {
 
 class UpdateQuery extends Query {
   _table: string;
-  _data: {[key: string]: any} = {};
 
   constructor(table: string) {
     // Private
@@ -690,39 +732,17 @@ class UpdateQuery extends Query {
     this._data = {};
   }
 
-  given(data: {[key: string]: any}) {
-    if (typeof data !== "object" || data === null) {
-      throw new Error("Data must be an object and not null");
-    }
-    let copy: {[key: string]: any} = {};
-    Object.keys(data).forEach((key) => {
-      copy[key] = toString(data[key]);
-    });
-    this._data = copy;
-
-    return this;
-  }
-
-  prime(field: string, value: any) {
-    this._data[field] = toString(value);
-
-    return this;
-  }
-
-  async sql(connection: mySQL.PoolConnection) {
-    if (!this._table) throw Error("You need to call specific method first");
+  sql(): string {
+    if (!this._table) 
+      throw Error("You need to call specific method first");
     if (Object.keys(this._data).length === 0)
       throw Error("You need provide data first");
 
-    let fields: {[key: string]: string}[] = await this.describeFields(connection, this._table);
-
     let set: string[] = [];
-    fields.forEach((field) => {
-      if (field["Extra"] === "auto_increment") return;
-      if (this._data[field["Field"]] === undefined) return;
+    this._fields.forEach((field) => {
       let key = uniqid();
-      set.push(`\`${field["Field"]}\` = :${key}`);
-      this._binding[key] = this._data[field["Field"]];
+      set.push(`\`${field}\` = :${key}`);
+      this._binding[key] = this._data[field];
     });
     if (set.length === 0) throw new Error("No data was provided" + this._table);
 
@@ -742,7 +762,6 @@ class UpdateQuery extends Query {
 
 class InsertQuery extends Query {
   _table: string;
-  _data: {[key: string]: any} = {};
 
   constructor(table: string) {
     // Private
@@ -750,42 +769,19 @@ class InsertQuery extends Query {
     this._table = table;
   }
 
-  given(data: {[key: string]: any}) {
-    if (typeof data !== "object" || data === null) {
-      throw new Error("Data must be an object and not null");
-    }
-    let copy: {[key: string]: any} = {};
-    Object.keys(data).forEach((key) => {
-      copy[key] = toString(data[key]);
-    });
-    this._data = copy;
-
-    return this;
-  }
-
-  prime(field: string, value: any) {
-    this._data[field] = toString(value);
-
-    return this;
-  }
-
-  async sql(connection: mySQL.PoolConnection) {
-    if (!this._table) throw Error("You need to call specific method first");
-
+  sql(): string {
+    if (!this._table) 
+      throw Error("You need to call specific method first");
     if (Object.keys(this._data).length === 0)
       throw Error("You need provide data first");
 
-    let fields = await this.describeFields(connection, this._table);
-
     let fs: string[] = [],
         vs: string[] = [];
-    fields.forEach((field) => {
-      if (field["Extra"] === "auto_increment") return;
-      if (this._data[field["Field"]] === undefined) return;
+    this._fields.forEach((field) => {
       let key = uniqid();
-      fs.push(`\`${field["Field"]}\``);
+      fs.push(`\`${field}\``);
       vs.push(`:${key}`);
-      this._binding[key] = this._data[field["Field"]];
+      this._binding[key] = this._data[field];
     });
 
     let sql = [
@@ -808,7 +804,6 @@ class InsertQuery extends Query {
 
 class InsertOnUpdateQuery extends Query {
   _table: string;
-  _data: {[key: string]: any} = {};
 
   constructor(table: string) {
     // Private
@@ -816,47 +811,24 @@ class InsertOnUpdateQuery extends Query {
     this._table = table;
   }
 
-  given(data: {[key: string]: any}) {
-    if (typeof data !== "object" || data === null) {
-      throw new Error("Data must be an object and not null");
-    }
-    let copy: {[key: string]: any} = {};
-    Object.keys(data).forEach((key) => {
-      copy[key] = toString(data[key]);
-    });
-    this._data = copy;
-
-    return this;
-  }
-
-  prime(field: string, value: any) {
-    this._data[field] = toString(value);
-
-    return this;
-  }
-
-  async sql(connection: mySQL.PoolConnection) {
-    if (!this._table) throw Error("You need to call specific method first");
-
+  sql(): string {
+    if (!this._table) 
+      throw Error("You need to call specific method first");
     if (Object.keys(this._data).length === 0)
       throw Error("You need provide data first");
-
-    let fields = await this.describeFields(connection, this._table);
 
     let fs: string[] = [],
         vs: string[] = [],
         us: string[] = [],
-        usp: any[]   = [];
-    fields.forEach((field) => {
-      if (field["Extra"] === "auto_increment") return;
-      if (this._data[field["Field"]] === undefined) return;
+        usp: {[key: string]: any} = {};
+    this._fields.forEach((field) => {
       let key = uniqid();
       let ukey = uniqid();
-      fs.push(`\`${field["Field"]}\``);
+      fs.push(`\`${field}\``);
       vs.push(`:${key}`);
-      us.push(`\`${field["Field"]}\` = :${ukey}`);
-      usp[ukey] = this._data[field["Field"]];
-      this._binding[key] = this._data[field["Field"]];
+      us.push(`\`${field}\` = :${ukey}`);
+      usp[ukey] = this._data[field];
+      this._binding[key] = this._data[field];
     });
 
     this._binding = { ...this._binding, ...usp };
@@ -890,7 +862,7 @@ class DeleteQuery extends Query {
     this._table = table;
   }
 
-  async sql(connection: mySQL.PoolConnection) {
+  sql(): string {
     if (!this._table) throw Error("You need to call specific method first");
 
     return [
@@ -901,7 +873,7 @@ class DeleteQuery extends Query {
   }
 }
 
-module.exports = {
+export {
   select,
   insert,
   update,
@@ -914,13 +886,14 @@ module.exports = {
   rollback,
   release,
   execute,
+  connection,
+  ConnectionState
 };
 
-function select() {
+function select(...fields: string[]) {
   let select = new SelectQuery();
-  let args = [...arguments];
-  if (args[0] === "*") return select;
-  args.forEach((arg) => {
+  if (fields.length == 0) return select;
+  fields.forEach((arg) => {
     if (typeof arg == "string") select.select(arg);
   });
 
@@ -944,7 +917,7 @@ function del(table: string) {
 }
 
 function node(link: string) {
-  let node = new Node();
+  let node = new Node(new Query());
   node._link = link;
 
   return node;
@@ -1040,4 +1013,26 @@ function isNodeJSErrnoException(value: unknown): value is NodeJS.ErrnoException 
     }
 
     return true;
+}
+
+function fieldResolve(fieldName: string) {
+  // replace all regex
+  let tokens = fieldName.replace(/'|"|`/g, '').split('.').filter(token => token !== '');
+  if (tokens.length === 1) {
+    return `\`${tokens[0]}\``
+  } else if (tokens.length === 2) {
+    return `\`${tokens[0]}\`.\`${tokens[1]}\``
+  } else {
+    throw new Error(`Invalid field name ${fieldName}`);
+  }
+}
+
+function toString(value: any) {
+  // Check if value is an array or object
+  if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {
+    // If value is an array, return a string with comma separated values
+    return JSON.stringify(value);
+  } else {
+    return value;
+  }
 }
