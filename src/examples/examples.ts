@@ -128,7 +128,7 @@ class Examples {
         const query = insert("user")
                         .given({user_id: "4", 
                                 name: "test4", 
-                                email: "email@email.com", 
+                                email: "email4@email.com", 
                                 phone: "123456", 
                                 status: 1});
 
@@ -180,7 +180,7 @@ class Examples {
             const query = insert("user")
                             .given({user_id: "3", 
                                     name: "test3", 
-                                    email: "email@email.com", 
+                                    email: "email3@email.com", 
                                     phone: "123456", 
                                     status: 1});
 

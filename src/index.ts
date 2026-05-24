@@ -4,6 +4,7 @@
  * - typescript the code
  * - make to string of values optional, by default values are converted to string (Buffer should not be converted)
  * - table fields are no more determined with describe query but determined from the data object's keys  
+ * - replace util's promisify with Promise 
  */
 
 import uniqid from "uniqid";

@@ -1,10 +1,13 @@
+import path from 'path';
+
 import { select }  from '../index.js';
 
 import {expect, test} from '@jest/globals';
 
 import { createRequire } from "module";
-const req = createRequire('/run/media/ahmedci/FCFCBBF8FCBBAAF2/Ahmet/Projects/GitCloneRepo/mysql-query-builder/src');
+const req = createRequire(__dirname);
 const parser = req('js-sql-parser');
+
 
 function parseSql(query: string) {
     if (!query || typeof query !== "string")
