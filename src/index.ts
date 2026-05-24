@@ -5,6 +5,8 @@
  * - make to string of values optional, by default values are converted to string (Buffer should not be converted)
  * - table fields are no more determined with describe query but determined from the data object's keys  
  * - replace util's promisify with Promise 
+ * - clone methods take advantage of structuredClone standard function
+ * - removed query reference from some classes due to circular dependecies leading to clone problems and ease reuse of components
  */
 
 import uniqid from "uniqid";
@@ -50,7 +52,7 @@ class Select {
 
   clone() {
     let cp = new Select();
-    cp._fields = this._fields;
+    cp._fields = structuredClone(this._fields);
 
     return cp;
   }
@@ -61,8 +63,9 @@ class Leaf {
   _link: string;
   _field: string;
   _operator: string;
-  _value: string;
+  _value: any;
   _parent?: Node;
+  _valueToString: boolean;
 
   constructor(link: string, field: string, 
               operator: string, value: any, 
@@ -104,13 +107,14 @@ class Leaf {
     this._field = fieldResolve(field);
     this._operator = operator.toUpperCase();
     this._parent = node;
+    this._valueToString = valueToString;
   }
 
   getBinding() {
     return this._binding;
   }
 
-  parent() {
+  getParent() {
     return this._parent;
   }
 
@@ -118,16 +122,10 @@ class Leaf {
     return `${this._link} ${this._field} ${this._operator} ${this._value}`;
   }
 
-  clone(node: Node) {
-    let cp = new Leaf("AND", "dummy", "=", "dummy"); // This is really dirty
-    cp._binding = this._binding;
-    cp._field = this._field;
-    cp._link = this._link;
-    cp._operator = this._operator;
-    cp._value = this._value;
-    cp._parent = node;
-
-    return cp;
+  clone() {
+    const valueClone = structuredClone(this._value);
+    //we don't set the parent as the parent will be set when cloning the tree 
+    return new Leaf(this._link, this._field, this._operator, valueClone, this._valueToString);
   }
 }
 
@@ -135,11 +133,8 @@ class Node {
   _tree: (Leaf | Node)[] = [];
   _link?: string;
   _parent?: Node;
-  _query: Query;
 
-  constructor(query: Query) {
-    this._query = query;
-  }
+  constructor() {}
 
   addLeaf(link: string, field: string, operator: string, value: any, 
           valueToString: boolean = true, node: Node = this) {
@@ -229,26 +224,14 @@ class Node {
     return statement;
   }
 
-  // a "proxy" function to Query execute method
-  async execute(connection: mySQL.PoolConnection, releaseConnection = true) {
-    return await this._query.execute(connection, releaseConnection);
-  }
-
-  // a "proxy" function to Query load method
-  async load(connection: mySQL.PoolConnection, releaseConnection = true) {
-    return await this._query.load(connection, releaseConnection);
-  }
-
-  clone(query: Query, parent: Node) {
-    let cp = new Node(query);
+  clone() {
+    let cp = new Node();
     cp._link = this._link;
-    cp._parent = parent;
+    //we don't set the parent as the parent will be set when cloning the tree 
     cp._tree = this._tree.map((t) => {
-      if (t instanceof Leaf) {
-        return t.clone(cp);
-      } else { 
-        return t.clone(query, cp);
-      }
+        const clone = t.clone();
+        clone._parent = cp;
+        return clone;
     });
 
     return cp;
@@ -257,11 +240,9 @@ class Node {
 
 class Join {
   _joins: {type: string, table: string, alias: string, on: Node}[] = [];
-  _query: Query;
 
-  constructor(query: Query) {
+  constructor() {
     this._joins = [];
-    this._query = query;
   }
 
   add(type: string, table: string, alias?: string) {
@@ -269,7 +250,7 @@ class Join {
       type,
       table,
       alias: alias || table,
-      on: new Node(this._query),
+      on: new Node(),
     });
 
     return this;
@@ -285,21 +266,30 @@ class Join {
     return node;
   }
 
+  getBinding() {
+    const binding: {[key:string]: any} = {};
+    this._joins.forEach((join) => {
+      Object.assign(binding, join.on.getBinding());
+    });
+    return binding;
+  }
+
   render() {
     if (this._joins.length === 0) return "";
 
     let stm = "";
     this._joins.forEach((join) => {
       stm += `${join.type} ${join.table} AS ${join.alias} ${join.on.render()} `;
-      Object.assign(this._query._binding, join.on.getBinding());
     });
 
     return stm;
   }
 
-  clone(query: Query) {
-    let cp = new Join(query);
-    cp._joins = this._joins;
+  clone() {
+    let cp = new Join();
+    cp._joins = this._joins.map(el => {
+      return {type: el.type, table: el.table, alias: el.alias, on: el.on.clone()};
+    });
 
     return cp;
   }
@@ -307,19 +297,18 @@ class Join {
 
 class Where extends Node {
 
-  constructor(query: Query) {
-    super(query);
+  constructor() {
+    super();
   }
 
   render() {
-    Object.assign(this._query._binding, this.getBinding());
     let render = super.render();
     if (render === "") return "";
     else return "WHERE " + render.slice(4);
   }
 
   andWhere(field: string, operator: string, value: any, valueToString: boolean = true) {
-    let node = new Node(this._query);
+    let node = new Node();
     node._link = "AND";
     node._parent = this;
     node.addLeaf("AND", field, operator, value, valueToString, this);
@@ -329,7 +318,7 @@ class Where extends Node {
   }
 
   orWhere(field: string, operator: string, value: any, valueToString: boolean = true) {
-    let node = new Node(this._query);
+    let node = new Node();
     node._link = "OR";
     node._parent = this;
     node.addLeaf("OR", field, operator, value, valueToString, this);
@@ -338,12 +327,13 @@ class Where extends Node {
     return node;
   }
 
-  clone(query: Query) {
-    let cp = new Where(query);
+  clone() {
+    let cp = new Where();
     cp._link = this._link;
     cp._tree = this._tree.map((t) => {
-      if (t instanceof Leaf) return t.clone(cp);
-      else return t.clone(query, cp);
+      const clone = t.clone();
+      clone._parent = cp;
+      return clone;
     });
 
     return cp;
@@ -353,20 +343,20 @@ class Where extends Node {
 class Having extends Node {
   _link: string = "HAVING";
 
-  constructor(query: Query) {
-    super(query);
+  constructor() {
+    super();
   }
 
   render() {
-    Object.assign(this._query._binding, this.getBinding());
     return super.render();
   }
 
-  clone(query: Query) {
-    let cp = new Having(query);
+  clone() {
+    let cp = new Having();
     cp._tree = this._tree.map((t) => {
-      if (t instanceof Leaf) return t.clone(cp);
-      else return t.clone(query, cp);
+      const clone = t.clone();
+      clone._parent = cp;
+      return clone;
     });
 
     return cp;
@@ -412,7 +402,7 @@ class GroupBy {
 
   clone() {
     let cp = new GroupBy();
-    cp._fields = [...this._fields];
+    cp._fields = structuredClone(this._fields);
 
     return cp;
   }
@@ -455,7 +445,7 @@ class Query {
   _fields: string[] = [];
 
   constructor() {
-    this._where = new Where(this);
+    this._where = new Where();
   }
 
   given(data: {[key: string]: any}, valueToString: boolean = true) {
@@ -492,7 +482,7 @@ class Query {
    */
   where(field: string, operator: string, value: any, valueToString: boolean = true) {
     // This method will reset the `_where` object. Call `andWhere` or `orWhere` if you want to add more condition
-    this._where = new Where(this);
+    this._where = new Where();
     this._where._link = "AND";
     this._where.addLeaf("AND", field, operator, value, valueToString, this._where);
 
@@ -517,6 +507,7 @@ class Query {
   }
 
   getBinding() {
+    //allow subclasses to add/modify bindings
     return this._binding;
   }
 
@@ -540,14 +531,15 @@ class Query {
 
   async execute(connection: mySQL.PoolConnection, releaseConnection = true) {
     let sql = this.sql();
-    let binding = [];
-    for (let key in this._binding) {
-      if (this._binding.hasOwnProperty(key)) {
+    const values = [];
+    const binding = this.getBinding(); //allow subclasses to add/modify bindings
+    for (let key in binding) {
+      if (binding.hasOwnProperty(key)) {
         sql = sql.replace(`:${key}`, "?");
-        binding.push(this._binding[key]);
+        values.push(binding[key]);
       }
     }
-    let result = await this.executeQuery(connection, sql, binding);
+    let result = await this.executeQuery(connection, sql, values);
     if (releaseConnection) release(connection);
 
     return result;
@@ -582,8 +574,8 @@ class SelectQuery extends Query {
   _table: string | undefined = undefined;
   _alias: string | undefined = undefined;
   _select = new Select();
-  _having = new Having(this);
-  _join = new Join(this);
+  _having = new Having();
+  _join = new Join();
   _limit = new Limit();
   _groupBy = new GroupBy();
   _orderBy = new OrderBy();
@@ -657,6 +649,11 @@ class SelectQuery extends Query {
     let from = `\`${this._table}\``;
     if (this._alias) from += ` AS \`${this._alias}\``;
 
+    Object.assign(this._binding, this._join.getBinding());
+    Object.assign(this._binding, this._where.getBinding());
+    Object.assign(this._binding, this._having.getBinding());
+    
+
     return [
       this._select.render().trim(),
       "FROM",
@@ -684,17 +681,18 @@ class SelectQuery extends Query {
     if (!(connection instanceof mySQL.PoolConnection)) {
       connection = await getConnection(connection);
     }
-    let sql = await this.sql();
-    let binding = [];
-    for (var key in this._binding) {
-      if (this._binding.hasOwnProperty(key)) {
+    let sql = this.sql();
+    let values = [];
+    const binding = this.getBinding();
+    for (var key in binding) {
+      if (binding.hasOwnProperty(key)) {
         sql = sql.replace(`:${key}`, "?");
-        binding.push(this._binding[key]);
+        values.push(binding[key]);
       }
     }
 
     try {
-      let result = await this.executeQuery(connection, sql, binding);
+      let result = await this.executeQuery(connection, sql, values);
       if (releaseConnection) release(connection);
       return result;
     } catch (e) {
@@ -712,9 +710,9 @@ class SelectQuery extends Query {
     let cp = new SelectQuery();
     cp._table = this._table;
     cp._alias = this._alias;
-    cp._where = this._where.clone(cp);
-    cp._having = this._having.clone(cp);
-    cp._join = this._join.clone(cp);
+    cp._where = this._where.clone();
+    cp._having = this._having.clone();
+    cp._join = this._join.clone();
     cp._limit = this._limit.clone();
     cp._groupBy = this._groupBy.clone();
     cp._orderBy = this._orderBy.clone();
@@ -746,6 +744,8 @@ class UpdateQuery extends Query {
       this._binding[key] = this._data[field];
     });
     if (set.length === 0) throw new Error("No data was provided" + this._table);
+
+    Object.assign(this._binding, this._where.getBinding());
 
     var sql = [
       "UPDATE",
@@ -866,6 +866,8 @@ class DeleteQuery extends Query {
   sql(): string {
     if (!this._table) throw Error("You need to call specific method first");
 
+    Object.assign(this._binding, this._where.getBinding());
+
     return [
       "DELETE FROM",
       `\`${this._table}\``,
@@ -888,7 +890,13 @@ export {
   release,
   execute,
   connection,
-  ConnectionState
+  ConnectionState,
+  Leaf,
+  Node,
+  SelectQuery,
+  InsertQuery,
+  InsertOnUpdateQuery,
+  UpdateQuery, 
 };
 
 function select(...fields: string[]) {
@@ -918,7 +926,7 @@ function del(table: string) {
 }
 
 function node(link: string) {
-  let node = new Node(new Query());
+  let node = new Node();
   node._link = link;
 
   return node;

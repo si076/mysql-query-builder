@@ -29,14 +29,14 @@ class Examples {
         if (!conn) {
             throw new Error("Cannot obtain a connection");
         }
-        const where = select()
-                        .from("product")
-                        .where("product_id", ">", 1);
+        const query = select()
+                        .from("product");
+        query.where("product_id", ">", 1);
 
-        console.log(where._query.sql());
-        console.log(where._query._binding);
+        console.log(query.sql());
+        console.log(query._binding);
 
-        const products = await where._query.execute(conn) as any[];
+        const products = await query.execute(conn) as any[];
 
         console.log(products);
 
@@ -53,17 +53,16 @@ class Examples {
             throw new Error("Cannot obtain a connection");
         }
 
-        const where = select()
+        const quey = select()
                         .from("product")
-                        .limit(0, 1)
-                        .where("product_id", ">", 1)
-                        .and("sku", "LIKE", "sku%");
+                        .limit(0, 1);
+        quey.where("product_id", ">", 1).and("sku", "LIKE", "sku%");
         
         
-        console.log(where._query.sql());
-        console.log(where._query._binding);
+        console.log(quey.sql());
+        console.log(quey._binding);
 
-        const products = await where.execute(conn) as [];
+        const products = await quey.execute(conn) as [];
 
         console.log(products);
 
@@ -151,14 +150,14 @@ class Examples {
         if (!conn) {
             throw new Error("Cannot obtain a connection");
         }
-        const where = update("user")
-                        .given({status: 2})
-                        .where("user_id", "=", 1);
+        const query = update("user")
+                        .given({status: 2});
+        query.where("user_id", "=", 1);
 
-        console.log(where._query.sql());
-        console.log(where._query._binding);
+        console.log(query.sql());
+        console.log(query._binding);
 
-        const res = await where.execute(conn) as ResultSetHeader;
+        const res = await query.execute(conn) as ResultSetHeader;
 
         console.log('affectedRows:', res.affectedRows);
 
@@ -237,15 +236,20 @@ class Examples {
             throw new Error("Cannot obtain a connection");
         }
 
-        let res = await del("user").where("user_id", "=", 3).execute(conn) as ResultSetHeader;
+        let query = del("user");
+        query.where("user_id", "=", 3);
+        let res = await query.execute(conn) as ResultSetHeader;
         console.log('affectedRows:', res.affectedRows);
 
-        res = await del("user").where("user_id", "=", 4).execute(conn) as ResultSetHeader;
+        query = del("user");  
+        query.where("user_id", "=", 4);
+        res = await query.execute(conn) as ResultSetHeader;
         console.log('affectedRows:', res.affectedRows);
 
-        res = await update("user")
-                        .given({status: 1})
-                        .where("user_id", "=", 1).execute(conn) as ResultSetHeader;
+        query = update("user")
+                    .given({status: 1});
+        query.where("user_id", "=", 1);
+        res = await query.execute(conn) as ResultSetHeader;
         console.log('affectedRows:', res.affectedRows);
 
         console.log('<-- clear');
