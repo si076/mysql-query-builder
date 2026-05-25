@@ -10,7 +10,7 @@
  */
 
 import uniqid from "uniqid";
-import mySQL, { QueryOptions, QueryResult, QueryValues, RowDataPacket } from "mysql2";
+import { Connection, FieldPacket, Pool, PoolConnection, QueryError, QueryOptions, RowDataPacket } from "mysql2";
 
 class Select {
   _fields: string[] = [];
@@ -63,7 +63,8 @@ class Leaf {
   _link: string;
   _field: string;
   _operator: string;
-  _value: any;
+  _value: string;
+  _originalValue: any;
   _parent?: Node;
   _valueToString: boolean;
 
@@ -71,7 +72,7 @@ class Leaf {
               operator: string, value: any, 
               valueToString: boolean = true,
               node?: Node) {
-    
+    this._originalValue = value;
     // Check if the value is a column or not
     if (/^[`a-zA-Z_1-9]+([.])(`)[a-zA-Z0-9-_]+(`)$/.test(value))
       this._value = value;
@@ -123,7 +124,7 @@ class Leaf {
   }
 
   clone() {
-    const valueClone = structuredClone(this._value);
+    const valueClone = structuredClone(this._originalValue);
     //we don't set the parent as the parent will be set when cloning the tree 
     return new Leaf(this._link, this._field, this._operator, valueClone, this._valueToString);
   }
@@ -511,15 +512,15 @@ class Query {
     return this._binding;
   }
 
-  async executeQuery(connection: mySQL.PoolConnection, 
-                     sql: string, values: mySQL.QueryValues) {
+  async executeQuery(connection: PoolConnection, 
+                     sql: string, values: any) {
     return new Promise((resolve, reject) => {
                           connection.query(
                                   sql, 
                                   values,
-                                  (err: mySQL.QueryError | null, 
+                                  (err: QueryError | null, 
                                    result: any, 
-                                   fields: mySQL.FieldPacket[]) => {
+                                   fields: FieldPacket[]) => {
                                      if (err) {
                                        reject(err);
                                      } else {
@@ -529,7 +530,7 @@ class Query {
                 });
   }
 
-  async execute(connection: mySQL.PoolConnection, releaseConnection = true) {
+  async execute(connection: PoolConnection, releaseConnection = true) {
     let sql = this.sql();
     const values = [];
     const binding = this.getBinding(); //allow subclasses to add/modify bindings
@@ -545,13 +546,13 @@ class Query {
     return result;
   }
 
-  async describeFields(connection: mySQL.PoolConnection, table: string): Promise<RowDataPacket[]> {
+  async describeFields(connection: PoolConnection, table: string): Promise<RowDataPacket[]> {
     return new Promise((resolve, reject) => {
                         connection.query({ sql: `DESCRIBE \`${table}\``} as QueryOptions, 
-                          null as QueryValues,
-                          (err: mySQL.QueryError | null, 
+                          null,
+                          (err: QueryError | null, 
                            result: RowDataPacket[], 
-                           fields: mySQL.FieldPacket[]) => {
+                           fields: FieldPacket[]) => {
                              if (err) {
                                reject(err);
                              } else {
@@ -565,7 +566,7 @@ class Query {
     throw new Error('To be implemented by subclasses');
   }
 
-  async load(connection: mySQL.PoolConnection, releaseConnection = true) {
+  async load(connection: PoolConnection, releaseConnection = true) {
     throw new Error('To be implemented by subclasses');
   }
 }
@@ -669,16 +670,16 @@ class SelectQuery extends Query {
       .join(" ");
   }
 
-  async load(connection: mySQL.PoolConnection, releaseConnection = true) {
+  async load(connection: PoolConnection, releaseConnection = true) {
     this.limit(0, 1);
     let results = await this.execute(connection, releaseConnection);
 
     return (results instanceof Array && results[0]) || null;
   }
 
-  async execute(conn: mySQL.Pool | mySQL.PoolConnection, releaseConnection = true) {
+  async execute(conn: Pool | PoolConnection, releaseConnection = true) {
     let connection = conn;
-    if (!(connection instanceof mySQL.PoolConnection)) {
+    if (!(isPoolConnection(connection))) {
       connection = await getConnection(connection);
     }
     let sql = this.sql();
@@ -933,11 +934,11 @@ function node(link: string) {
 }
 
 /* Create a connection from a pool */
-async function getConnection(pool: mySQL.Pool): Promise<mySQL.PoolConnection> {
+async function getConnection(pool: Pool): Promise<PoolConnection> {
   return new Promise((resolve, reject) => {
                       pool.getConnection((
                         err: NodeJS.ErrnoException | null,
-                        connection: mySQL.PoolConnection
+                        connection: PoolConnection
                       ) => {
                         if (err) {
                           reject(err);
@@ -951,12 +952,12 @@ async function getConnection(pool: mySQL.Pool): Promise<mySQL.PoolConnection> {
 class ConnectionState {
   INTRANSACTION: boolean = false;
   COMMITTED = false;
-  _pool: mySQL.Pool | null = null;
+  _pool: Pool | null = null;
 }
 
 const connection = new ConnectionState();
 
-async function startTransaction(conn: mySQL.PoolConnection) {
+async function startTransaction(conn: PoolConnection) {
   await execute(conn, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
   await execute(conn, "SET autocommit = 0");
   await execute(conn, "START TRANSACTION");
@@ -964,7 +965,7 @@ async function startTransaction(conn: mySQL.PoolConnection) {
   connection.COMMITTED = false;
 }
 
-async function commit(conn: mySQL.PoolConnection) {
+async function commit(conn: PoolConnection) {
   await execute(conn, "COMMIT");
   await execute(conn, "SET autocommit = 1");
   connection.INTRANSACTION = false;
@@ -972,12 +973,12 @@ async function commit(conn: mySQL.PoolConnection) {
   release(conn);
 }
 
-async function rollback(connection: mySQL.PoolConnection) {
+async function rollback(connection: PoolConnection) {
   await execute(connection, "ROLLBACK");
   connection.destroy();
 }
 
-function release(conn: mySQL.PoolConnection) {
+function release(conn: PoolConnection) {
   if (connection.INTRANSACTION === true) {
     return;
   }
@@ -986,12 +987,12 @@ function release(conn: mySQL.PoolConnection) {
   }
 }
 
-async function execute(connection: mySQL.PoolConnection, query: string) {
+async function execute(connection: PoolConnection, query: string) {
   return new Promise((resolve, reject) => {
                   connection.query(query,
-                    (err: mySQL.QueryError | null, 
+                    (err: QueryError | null, 
                      result: any, 
-                     fields: mySQL.FieldPacket[]) => {
+                     fields: FieldPacket[]) => {
                        if (err) {
                          reject(err);
                        } else {
@@ -1022,6 +1023,13 @@ function isNodeJSErrnoException(value: unknown): value is NodeJS.ErrnoException 
     }
 
     return true;
+}
+
+function isPoolConnection(value: unknown): value is PoolConnection {
+  if (value instanceof Object && Object.getPrototypeOf(value) instanceof Connection ) {
+    return true;
+  }
+  return false;
 }
 
 function fieldResolve(fieldName: string) {

@@ -238,12 +238,12 @@ class Examples {
 
         let query = del("user");
         query.where("user_id", "=", 3);
-        let res = await query.execute(conn) as ResultSetHeader;
+        let res = await query.execute(conn, false) as ResultSetHeader;
         console.log('affectedRows:', res.affectedRows);
 
         query = del("user");  
         query.where("user_id", "=", 4);
-        res = await query.execute(conn) as ResultSetHeader;
+        res = await query.execute(conn, false) as ResultSetHeader;
         console.log('affectedRows:', res.affectedRows);
 
         query = update("user")
